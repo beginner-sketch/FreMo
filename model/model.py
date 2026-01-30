@@ -140,20 +140,21 @@ class MultiModalSTEncoder(nn.Module):
         return h
     
 
-class FreqAwareModule(nn.Module):
+class FreMo(nn.Module):
+    """
+        Args:
+            Input h: [b,d,n,m,t]     
+        Returns:
+            Input out: [b,d,n,m,t]     
+        """
     def __init__(self, seq_len, num_nodes, num_modes, d, node_emb_dim=32):
-        super(FreqAwareModule, self).__init__()
+        super(FreMo, self).__init__()
         self.num_modes = num_modes
         self.num_nodes = num_nodes
         self.freq_dim = seq_len // 2 + 1
-        
-        # 1. 节点嵌入 (Node Embedding)：用于解决空间异质性
         self.node_emb = nn.Parameter(torch.randn(num_nodes, node_emb_dim))
 
-        # 2. 模态特异性权重生成器 (Modality-Specific Weight Generators)
         input_dim = self.freq_dim + node_emb_dim
-        
-        # 为每个模态单独建模
         self.weight_generators = nn.ModuleList([
             nn.Sequential(
                 nn.Linear(input_dim, d),
@@ -162,24 +163,9 @@ class FreqAwareModule(nn.Module):
                 nn.Sigmoid() # 输出 [0, 1] 的门控
             ) for _ in range(num_modes)
         ])
-        
-        # 3. 协同投影器 (Synergy Projectors)：用于计算 Softmax 注意力分数
-#         self.synergy_projectors = nn.ModuleList([
-#             nn.Linear(self.freq_dim, self.freq_dim) 
-#             for _ in range(num_modes)
-#         ])
-        
-        # 4. 共识残差的缩放参数(对Consensus的听劝程度)
+
+        # Modality-shared Scalar
         self.gamma = nn.Parameter(torch.zeros(1)) 
-        # Static Modality-Specific Gamma: 因为参数量增加导致难以优化
-#         self.gamma = nn.Parameter(torch.zeros(1, 1, num_modes, 1, 1))
-        # Dynamic Gating
-#         self.gamma_generator = nn.Sequential(
-#             nn.Linear(self.freq_dim, d // 4), 
-#             nn.ReLU(),
-#             nn.Linear(d // 4, 1),
-#             nn.Sigmoid()
-#         )
 
     def forward(self, h):
         """
@@ -189,116 +175,69 @@ class FreqAwareModule(nn.Module):
             out: 输出隐藏状态，形状 [b,d,n,m,t]     
         """
         b, d, n, m, t = h.shape
-        h_t = h.permute(0, 2, 3, 1, 4) # [b,d,n,m,t] -> [b, n, m, d, t]
+        h_t = h.permute(0, 2, 3, 1, 4)
         # =============================================================
-        # Step 1: 频域映射 (FFT) -> FFT over time
+        # FFT over temporal domain
         # =============================================================        
-        f_complex = torch.fft.rfft(h_t, dim=-1) # [b, n, m, d, f]
-        f_amp = torch.abs(f_complex) # 取幅值
+        f_complex = torch.fft.rfft(h_t, dim=-1)
+        # Amplitude
+        f_amp = torch.abs(f_complex)
 
-        # Node Embedding: [n, d] -> [b, n, d]
+        # Node Embedding
         node_emb_expanded = self.node_emb.unsqueeze(0).expand(b, -1, -1)
 
-        f_weighted_list = [] # 存储被权重过滤后的各模态特征
-        scores_list = []     # 存储注意力分数
-        
-        # for save
-        w_list = []
+        f_weighted_list = []
+        scores_list = []
 
         # =============================================================
-        # Step 2: 逐模态处理 (Per-Mode Processing)
+        # Modality-Specific Frequency Filter (MFF) 
         # =============================================================
+        # Per-Mode Processing
         for i in range(m):
-            # 取出当前模态的数据
-            f_amp_m = f_amp[:, :, i, :, :] # [b, n, d, f]
+            # Spectral signal of modality i
+            f_amp_m = f_amp[:, :, i, :, :]
             f_complex_m = f_complex[:, :, i, :, :]
-
-            # --- A. 节点级频率权重生成 ---
-            # 1. 通道汇聚
-            f_profile = f_amp_m.mean(dim=2) # [b, n, d, f] -> [b, n, f]
             
-            # 2. 注入空间异质性
-            features = torch.cat([f_profile, node_emb_expanded], dim=-1) # [b, n, f+d]
+            # hidden dimension aggregate
+            f_profile = f_amp_m.mean(dim=2)
             
-            # 3. 生成频率权重
-            w = self.weight_generators[i](features) # [b, n, f]
-            # for save
-            w_list.append(w)
+            # Node embedding
+            features = torch.cat([f_profile, node_emb_expanded], dim=-1)
             
-            # 4. 施加权重 (相位保护): [b, n, d, f] * [b, n, 1, f]
-            w_expanded = w.unsqueeze(2)     # [b, n, 1, f]
-            f_weighted = f_complex_m * w_expanded  # [b, n, d, f]
-            f_weighted_list.append(f_weighted)
+            # Weight generation
+            w = self.weight_generators[i](features)
             
-            # --- B. 计算协同分数 ---
-            # 基于过滤后的特征判断质量
-#             f_weighted_profile = torch.abs(f_weighted).mean(dim=2)  # [b, n, f]
-#             score = self.synergy_projectors[i](f_weighted_profile)  # [b, n, f]
+            # Frequency re-weight (Phase Preserving)
+            w_expanded = w.unsqueeze(2)  
+            f_weighted = f_complex_m * w_expanded
             
-            # 直接使用 Profile 作为 Score，移除 Projector:保留下来的能量越大，说明该模态在该频率越重要
-            score = torch.abs(f_weighted).mean(dim=2)  # [b, n, f]
+            # Synergy score
+            score = torch.abs(f_weighted).mean(dim=2)
             scores_list.append(score)
 
         # =============================================================
-        # Step 3: 频率引导的协同建模 (Synergy Consensus)
+        # Frequency-Guided Synergy Augmenter (FSA) 
         # =============================================================
-        # 1. 计算全局模态注意力 (Softmax)
-        scores_stack = torch.stack(scores_list, dim=0)  # [m, b, n, f]
-        # 在模态维度归一化 -> 得到每个模态在每个频率点的重要性分布
-        alpha = F.softmax(scores_stack, dim=0) # [m, b, n, f]
-        alpha_expanded = alpha.unsqueeze(3)  # [m, b, n, 1, f]
+        # Modality softmax
+        scores_stack = torch.stack(scores_list, dim=0)
+        alpha = F.softmax(scores_stack, dim=0)
+        alpha_expanded = alpha.unsqueeze(3)
         
-        # Stack weighted features
-        f_weighted_stack = torch.stack(f_weighted_list, dim=0) #  [m, b, n, d, f]
+        # Stack filtered features
+        f_weighted_stack = torch.stack(f_weighted_list, dim=0)
 
-        # 2. 生成“协同共识”信号 (Synergy Consensus Signal)：对所有模态加权求和 -> 得到当前系统中最强的频率特征组合
-        f_consensus = torch.sum(alpha_expanded * f_weighted_stack, dim=0)  # [b, n, d, f]
+        # Synergy Consensus
+        f_consensus = torch.sum(alpha_expanded * f_weighted_stack, dim=0)
         
+        # Feedback & Reconstruction
+        f_consensus_expanded = f_consensus.unsqueeze(2) 
+        f_out_complex = f_complex + self.gamma * f_consensus_expanded
+
         # =============================================================
-        # Step 4: 反馈注入与重构 (Feedback & Reconstruction)
-        # =============================================================
-        f_consensus_expanded = f_consensus.unsqueeze(2) # [b, n, 1, d, f]
-        
-        # dynamic gamma:根据"原始信号"长什么样来决定是否需要协同
-#         gamma = self.gamma_generator(f_amp.mean(dim=3)).unsqueeze(4)  # [b, n, m, 1, 1]
-#         f_out_complex = f_complex + gamma * f_consensus_expanded  # [b, n, m, d, f]
-        
-        # 残差连接：原始信号 + 协同信号
-        f_out_complex = f_complex + self.gamma * f_consensus_expanded  # [b, n, m, d, f]
-        # no gamma
-#         f_out_complex = f_complex + f_consensus_expanded  # [b, n, m, d, f]
-        
-        
-        # IFFT 回到时域
-        out_perm = torch.fft.irfft(f_out_complex, n=t, dim=-1)  # [b, n, m, d, t]
-        out = out_perm.permute(0, 3, 1, 2, 4)  # [b, n, m, d, t] -> [b,d,n,m,t]    
-        
-        # save features
-#         torch.save({
-#             # ===== input =====
-#             "h": h.detach().cpu(), # [b,d,n,m,t]
-            
-#             # ===== frequency domain =====
-#             "f_complex": f_complex.detach().cpu(), # complex: [b,n,m,d,f]
-#             "f_amp": f_amp.detach().cpu(), # amp: [b,n,m,d,f]
-            
-#             # ===== spatial heterogeneity =====
-#             "node_emb": self.node_emb.detach().cpu(), # [n, d_node]
-            
-#             # ===== Modality-specific Frequency Filter =====
-#             "weights": [w.detach().cpu() for w in w_list],  # m × [b,n,f]
-#             "f_weighted_stack": f_weighted_stack.detach().cpu(), # weighted features: [m,b,n,d,f]
-#             "scores_stack": scores_stack.detach().cpu(), # [m,b,n,f]           
-            
-#             # ===== Frequency-guided Synergy Augmenter =====
-#             "alpha": alpha.detach().cpu(), # score after modality softmax: [m,b,n,f]
-#             "gamma": self.gamma.detach().cpu().item(),
-#             "f_consensus": f_consensus.detach().cpu(), # consensus
-#             "f_out_complex": f_out_complex.detach().cpu(), # feature after feedback
-#             "out_perm": out_perm.detach().cpu(), # IFFT feature
-#         }, "/home/users/djw/MoFre/plot/features.pth")
-        
-        
+        # Back to temporal domain
+        # =============================================================        
+        out_perm = torch.fft.irfft(f_out_complex, n=t, dim=-1)
+        out = out_perm.permute(0, 3, 1, 2, 4)
         return out
 
 class Predictor(nn.Module):
@@ -326,15 +265,14 @@ class Predictor(nn.Module):
 
     def forward(self, h):
         # h: [b,d,n,m,t]
-        h_glu = self.temporal_glu(h)  # [b,2d,n,m,1]
+        h_glu = self.temporal_glu(h)
         v, g = h_glu.chunk(2, dim=1)
         h = v * torch.sigmoid(g)
-
-        pred = self.proj(h)  # [b,pred_len,n,m,1]
+        pred = self.proj(h)
         return pred
     
     
-class MoFre(nn.Module):
+class model(nn.Module):
     """
     Parameter:
         d: int = 64                               # dimention of hidden channel
@@ -347,7 +285,7 @@ class MoFre(nn.Module):
         kernel: int = 3                           # TCN kernel
     """
     def __init__(self, seq_len, num_nodes, num_modes, pred_len, d, latents, layers, in_dim=1, kernel=3):
-        super(MoFre, self).__init__()
+        super(model, self).__init__()
         # Linear Projection
         self.init_proj = nn.Sequential(
             nn.Conv3d(in_channels = in_dim, out_channels = int(d//2), kernel_size = (1,1,1)),
@@ -374,46 +312,5 @@ class MoFre(nn.Module):
         h_fre = self.fre_encoder(h_enc)   # [b,d,n,m,t]
         # Predictor
         pred = self.predictor(h_fre)  # [b,pred_len,n,m,1]        
-        return pred
-        
-def main():
-    # 使用 argparse 更清晰地解析命令行参数
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--gpu', type=int, default=0, help='GPU device id (default: 0)')
-    args = parser.parse_args()
-
-    # 设置设备
-    if torch.cuda.is_available():
-        assert args.gpu < torch.cuda.device_count(), f"指定的 GPU:{args.gpu} 不存在，可用 GPU 数量为 {torch.cuda.device_count()}"
-        device = torch.device(f'cuda:{args.gpu}')
-        summary_device = 'cuda'  # torchsummary 只接受 'cuda' 或 'cpu'
-    else:
-        device = torch.device('cpu')
-        summary_device = 'cpu'
-
-    # 参数设置
-    num_nodes = 98
-    num_modes = 4
-    d = 64
-    batch = 8
-    latents = 32
-    seq_len = 16
-    pred_len = 3
-    layers = 4
-
-    # 输入数据 [batch, seq_len, num_nodes]
-    data = torch.rand(batch, seq_len, num_nodes, num_modes, 1).to(summary_device)
-    print("data -> ", data.shape)
-    # 模型实例化并移动到目标设备
-    model = MoFre(seq_len, num_nodes, num_modes, pred_len, d, latents, layers).to(summary_device)
-
-    # 打印模型结构
-    summary(model, input_data=data, device=summary_device)
-
-    # 测试前向传播
-    out = model(data)
-    print("out -> ", out.shape)
-
-if __name__ == '__main__':
-    main()        
+        return pred        
                 
