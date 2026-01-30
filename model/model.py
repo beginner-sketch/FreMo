@@ -4,9 +4,6 @@ import torch.nn.functional as F
 import torch.fft
 from model.Attention import AttentionLayer, FullAttention
 from model.FreMo import FreMo
-import sys
-import argparse
-from torchinfo import summary
 
 def init_linear(module: nn.Linear):
     nn.init.xavier_uniform_(module.weight)
