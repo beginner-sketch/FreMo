@@ -7,13 +7,13 @@ import numpy as np
 import torch
 import torch.optim as optim
 import torch.nn as nn
-from model.MoFre import MoFre
+from model.model import FreMo
 from lib.utils import data_gen, gen_batch, get_metric
 np.random.seed(1337)
 torch.backends.cudnn.benchmark = True
 
 def get_model():  
-    model = MoFre(args.seq_len,  args.num_nodes, args.num_modes, args.horizon, args.d, args.latents, layers).to(device)
+    model = FreMo(args.seq_len,  args.num_nodes, args.num_modes, args.horizon, args.d, args.latents, layers).to(device)
     return model
 
 def prepare_x_y(x, y):
@@ -118,7 +118,7 @@ def traintest_model(dataset):
 
 # Params #
 parser = argparse.ArgumentParser()
-parser.add_argument('--model_name', default = 'MoFre', type=str, help = 'model name')
+parser.add_argument('--model_name', default = 'FreMo', type=str, help = 'model name')
 parser.add_argument('--data_name', default = 'NYC', type=str, help = 'NYC / DC / Chicago')
 parser.add_argument('--num_nodes', default = 98, type=int, help='number of nodes')
 parser.add_argument('--num_modes', default = 4, type=int, help='number of modalities')
@@ -161,15 +161,12 @@ if args.data_name == 'NYC':
     args.num_nodes = 98
     args.num_modes = 4
     dataset = data_gen('data/NYC.h5', (n_train, n_val, n_test), args.num_nodes, args.seq_len + args.horizon, args.num_modes, day_slot=48)
-if args.data_name == 'DC':
-    n_train, n_val, n_test = 90, 5, 5
-    args.num_nodes = 108
-    args.num_modes = 4
-    dataset = data_gen('data/DC.h5', (n_train, n_val, n_test), args.num_nodes, args.seq_len + args.horizon, args.num_modes, day_slot=24)
 if args.data_name == 'Chicago':
     n_train, n_val, n_test = 81, 5, 5
     args.num_nodes = 510
     args.num_modes = 4
+    args.d = 32
+    args.latents = 32
     dataset = data_gen('data/Chicago.h5', (n_train, n_val, n_test), args.num_nodes, args.seq_len + args.horizon, args.num_modes, day_slot=48)
 #######################################
 def main():    
