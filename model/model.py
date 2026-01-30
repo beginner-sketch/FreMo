@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.fft
 from model.Attention import AttentionLayer, FullAttention
 from model.FreMo import FreMo
 
