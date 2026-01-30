@@ -38,7 +38,6 @@ class TemporalEncoder(nn.Module):
         self.residual = nn.Conv2d(in_channels = d, out_channels = d, kernel_size=(1,1))
 
     def forward(self, h):
-        # h: [b,d,n,m,t]
         b, d, n, m, t  = h.shape        
         h =h.permute(0, 2, 1, 3, 4).reshape(b*n, d, m, t) 
         # causal padding (left padding only)
@@ -178,7 +177,7 @@ class model(nn.Module):
         pred_len: int = 3                         # horizon
         num_nodes: int = 98                       # nodes
         num_modes: int = 4                        # modalities
-        L: int = 64                               # inducing Points (latent)
+        latents: int = 64                         # inducing Points
         layers: int = 4                           # TCN layer
         kernel: int = 3                           # TCN kernel
     """
