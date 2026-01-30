@@ -7,13 +7,13 @@ import numpy as np
 import torch
 import torch.optim as optim
 import torch.nn as nn
-from model.model import FreMo
+from model.model import model
 from lib.utils import data_gen, gen_batch, get_metric
 np.random.seed(1337)
 torch.backends.cudnn.benchmark = True
 
 def get_model():  
-    model = FreMo(args.seq_len,  args.num_nodes, args.num_modes, args.horizon, args.d, args.latents, layers).to(device)
+    model = model(args.seq_len,  args.num_nodes, args.num_modes, args.horizon, args.d, args.latents, layers).to(device)
     return model
 
 def prepare_x_y(x, y):
