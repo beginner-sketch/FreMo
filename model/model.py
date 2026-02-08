@@ -38,10 +38,10 @@ class TemporalEncoder(nn.Module):
         h =h.permute(0, 2, 1, 3, 4).reshape(b*n, d, m, t) 
         # causal padding (left padding only)
         h_pad = F.pad(h, (self.causal_pad_len, 0, 0, 0))
-        # filter
+        # Filter
         filter_out = self.filter_conv(h_pad)
         filter_act = torch.tanh(filter_out).reshape(b*n, d, m, t)
-        # gate
+        # Gate
         gate_out = self.gate_conv(h_pad)
         gate_act = torch.sigmoid(gate_out).reshape(b*n, d, m, t)
         h_res = self.residual(filter_act * gate_act)
@@ -187,7 +187,7 @@ class model(nn.Module):
             nn.ReLU()
         )  
         
-        # General Encoder
+        # Spatio-temporal Encoder
         self.encoder = MultiModalSTEncoder(num_modes, d, layers, latents, kernel)
         
         # Frequency-Domain Multi-Modality Transportation Modeling
