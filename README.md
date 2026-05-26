@@ -1,4 +1,7 @@
-# FreMo: Frequency-Domain Multi-Modality Transportation Modeling
+# [KDD `26] FreMo: Frequency-Domain Multi-Modality Transportation Modeling
+**[KDD `26] Jiewen Deng, Hangchen Liu, Junchen Li, Boyuan Zhang, Renhe Jiang, "Frequency-Domain Multi-Modality Transportation Modeling", KDD, 2026.**
+
+**Our research has been accepted for presentation at the Research Track of KDD 2026.**
 **This implementation showcases our FreMo model.** 
 ## Installation Dependencies
 ``` 
