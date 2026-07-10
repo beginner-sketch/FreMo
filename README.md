@@ -3,6 +3,9 @@
 
 **Our research has been accepted for presentation at the Research Track of KDD 2026.**
 **This implementation showcases our FreMo model.** 
+
+![image](https://github.com/beginner-sketch/FreMo/blob/main/framework.png)
+
 ## Installation Dependencies
 ``` 
 Python 3 (>= 3.6; Anaconda Distribution)
